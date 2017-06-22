@@ -1,16 +1,16 @@
 #ifndef OPENTRACING_SPAN_H
 #define OPENTRACING_SPAN_H
 
-#include <opentracing/preprocessor.h>
 #include <opentracing/stringref.h>
 #include <opentracing/util.h>
 #include <opentracing/value.h>
+#include <opentracing/version.h>
 #include <chrono>
 #include <functional>
 #include <string>
 
 namespace opentracing {
-inline namespace OPENTRACING_VERSION_NAMESPACE {
+BEGIN_OPENTRACING_ABI_NAMESPACE
 class Tracer;
 
 // SpanContext represents Span state that must propagate to descendant Spans and
@@ -51,6 +51,8 @@ class FinishSpanOption {
 // Spans are created by the Tracer interface.
 class Span {
  public:
+  // If Finish has not already been called for the Span, it's destructor must
+  // do so.
   virtual ~Span() = default;
 
   // Sets the end timestamp and finalizes Span state.
@@ -71,7 +73,7 @@ class Span {
   //
   // If SetOperationName is called after Finish it leaves the Span in a valid
   // state, but its behavior is unspecified.
-  virtual void SetOperationName(StringRef name) = 0;
+  virtual void SetOperationName(StringRef name) noexcept = 0;
 
   // Adds a tag to the span.
   //
@@ -84,7 +86,7 @@ class Span {
   //
   // If SetTag is called after Finish it leaves the Span in a valid state, but
   // its behavior is unspecified.
-  virtual void SetTag(StringRef key, const Value& value) = 0;
+  virtual void SetTag(StringRef key, const Value& value) noexcept = 0;
 
   // SetBaggageItem sets a key:value pair on this Span and its SpanContext
   // that also propagates to descendants of this Span.
@@ -103,11 +105,22 @@ class Span {
   //
   // If SetBaggageItem is called after Finish it leaves the Span in a valid
   // state, but its behavior is unspecified.
-  virtual void SetBaggageItem(StringRef restricted_key, StringRef value) = 0;
+  virtual void SetBaggageItem(StringRef restricted_key,
+                              StringRef value) noexcept = 0;
 
   // Gets the value for a baggage item given its key. Returns the empty string
   // if the value isn't found in this Span.
-  virtual std::string BaggageItem(StringRef restricted_key) const = 0;
+  virtual std::string BaggageItem(StringRef restricted_key) const noexcept = 0;
+
+  // Log is an efficient and type-checked way to record key:value logging data
+  // about a Span. Here's an example:
+  //
+  //    span.Log({
+  //        {"event", "soft error"},
+  //        {"type", "cache timeout"},
+  //        {"waited.millis", 1500}});
+  virtual void Log(
+      std::initializer_list<std::pair<StringRef, Value>> fields) noexcept = 0;
 
   // context() yields the SpanContext for this Span. Note that the return
   // value of context() is still valid after a call to Span.Finish(), as is
@@ -125,10 +138,19 @@ class FinishTimestamp : public FinishSpanOption {
   explicit FinishTimestamp(SteadyTime steady_when) noexcept
       : steady_when_(steady_when) {}
 
+  // Construct a timestamp using a duration from the epoch of std::time_t.
+  // From the documentation on std::time_t's epoch:
+  //     Although not defined, this is almost always an integral value holding
+  //     the number of seconds (not counting leap seconds) since 00:00, Jan 1
+  //     1970 UTC, corresponding to POSIX time
+  // See http://en.cppreference.com/w/cpp/chrono/c/time_t
   template <class Rep, class Period>
   explicit FinishTimestamp(
-      const std::chrono::duration<Rep, Period>& time_since_epoch)
-      : steady_when_(time_since_epoch) {}
+      const std::chrono::duration<Rep, Period>& time_since_epoch) noexcept
+      : steady_when_(convert_time_point<SteadyClock>(
+            SystemClock::from_time_t(std::time_t(0)) +
+            std::chrono::duration_cast<SystemClock::duration>(
+                time_since_epoch))) {}
 
   FinishTimestamp(const FinishTimestamp& other) noexcept
       : FinishSpanOption(), steady_when_(other.steady_when_) {}
@@ -140,7 +162,7 @@ class FinishTimestamp : public FinishSpanOption {
  private:
   SteadyTime steady_when_;
 };
-}  // namespace OPENTRACING_VERSION_NAMESPACE
+END_OPENTRACING_ABI_NAMESPACE
 }  // namespace opentracing
 
 #endif  // OPENTRACING_SPAN_H

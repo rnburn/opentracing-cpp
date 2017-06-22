@@ -1,27 +1,31 @@
 #include <opentracing/noop.h>
 
 namespace opentracing {
-inline namespace OPENTRACING_VERSION_NAMESPACE {
+BEGIN_OPENTRACING_ABI_NAMESPACE
 namespace {
 class NoopSpanContext : public SpanContext {
  public:
   void ForeachBaggageItem(
-      std::function<bool(const std::string& key, const std::string& value)> f)
-      const override {}
+      std::function<bool(const std::string& key,
+                         const std::string& value)> /*f*/) const override {}
 };
 
 class NoopSpan : public Span {
  public:
-  NoopSpan(std::shared_ptr<const Tracer>&& tracer)
+  explicit NoopSpan(std::shared_ptr<const Tracer>&& tracer) noexcept
       : tracer_(std::move(tracer)) {}
   void FinishWithOptions(
-      const FinishSpanOptions& finish_span_options) noexcept override {}
-  void SetOperationName(StringRef name) override {}
-  void SetTag(StringRef key, const Value& value) override {}
-  void SetBaggageItem(StringRef restricted_key, StringRef value) override {}
-  std::string BaggageItem(StringRef restricted_key) const override {
+      const FinishSpanOptions& /*finish_span_options*/) noexcept override {}
+  void SetOperationName(StringRef /*name*/) noexcept override {}
+  void SetTag(StringRef /*key*/, const Value& /*value*/) noexcept override {}
+  void SetBaggageItem(StringRef /*restricted_key*/,
+                      StringRef /*value*/) noexcept override {}
+  std::string BaggageItem(StringRef /*restricted_key*/) const
+      noexcept override {
     return {};
   }
+  void Log(std::initializer_list<std::pair<StringRef, Value>>
+           /*fields*/) noexcept override {}
   const SpanContext& context() const noexcept override { return span_context_; }
   const Tracer& tracer() const noexcept override { return *tracer_; }
 
@@ -34,20 +38,29 @@ class NoopTracer : public Tracer,
                    public std::enable_shared_from_this<NoopTracer> {
  public:
   std::unique_ptr<Span> StartSpanWithOptions(
-      StringRef operation_name,
-      const StartSpanOptions& options) const override {
-    return std::unique_ptr<Span>(new NoopSpan(shared_from_this()));
+      StringRef /*operation_name*/, const StartSpanOptions& /*options*/) const
+      noexcept override {
+    return std::unique_ptr<Span>(new (std::nothrow)
+                                     NoopSpan(shared_from_this()));
   }
 
-  Expected<void, std::string> Inject(
-      const SpanContext& sc, CarrierFormat format,
-      const CarrierWriter& writer) const override {
+  Expected<void> Inject(const SpanContext& /*sc*/,
+                        const TextMapWriter& /*writer*/) const override {
     return {};
   }
 
-  std::unique_ptr<SpanContext> Extract(
-      CarrierFormat format, const CarrierReader& reader) const override {
-    return nullptr;
+  Expected<void> Inject(const SpanContext& /*sc*/,
+                        const HTTPHeadersWriter& /*writer*/) const override {
+    return {};
+  }
+
+  Expected<std::unique_ptr<SpanContext>> Extract(
+      const TextMapReader& /*reader*/) const override {
+    return std::unique_ptr<SpanContext>(nullptr);
+  }
+  Expected<std::unique_ptr<SpanContext>> Extract(
+      const HTTPHeadersReader& /*reader*/) const override {
+    return std::unique_ptr<SpanContext>(nullptr);
   }
 };
 }  // anonymous namespace
@@ -55,5 +68,5 @@ class NoopTracer : public Tracer,
 std::shared_ptr<Tracer> make_noop_tracer() noexcept {
   return std::shared_ptr<Tracer>(new (std::nothrow) NoopTracer());
 }
-}  // namespace OPENTRACING_VERSION_NAMESPACE
-}  // namesapce opentracing
+END_OPENTRACING_ABI_NAMESPACE
+}  // namespace opentracing

@@ -1,8 +1,8 @@
 #ifndef OPENTRACING_VALUE_H
 #define OPENTRACING_VALUE_H
 
-#include <opentracing/preprocessor.h>
 #include <opentracing/stringref.h>
+#include <opentracing/version.h>
 #include <cstdint>
 #include <opentracing/mapbox_variant/variant.hpp>
 #include <string>
@@ -10,14 +10,14 @@
 #include <vector>
 
 namespace opentracing {
-inline namespace OPENTRACING_VERSION_NAMESPACE {
+BEGIN_OPENTRACING_ABI_NAMESPACE
 // Variant value types for span tags and log payloads.
 class Value;
 
 typedef std::unordered_map<std::string, Value> Dictionary;
 typedef std::vector<Value> Values;
 typedef mapbox::util::variant<bool, double, int64_t, uint64_t, std::string,
-                              std::nullptr_t, const char*, StringRef,
+                              std::nullptr_t, const char*,
                               mapbox::util::recursive_wrapper<Values>,
                               mapbox::util::recursive_wrapper<Dictionary>>
     variant_type;
@@ -25,14 +25,45 @@ typedef mapbox::util::variant<bool, double, int64_t, uint64_t, std::string,
 class Value : public variant_type {
  public:
   Value() : variant_type(nullptr) {}
+  Value(std::nullptr_t) : variant_type(nullptr) {}
 
-  template <typename T>
-  Value(T&& t) : variant_type(std::forward<T>(t)) {}
+  // variant_type's constructors will do some undesirable casting, for example
+  //      variant_type(123)
+  // will construct a bool variant; hence, constructors are expanded
+  // out so as to provide more sensible behavior.
+  Value(bool x) : variant_type(x) {}
+
+  template <typename T,
+            typename std::enable_if<std::is_integral<T>::value &&
+                                    std::is_signed<T>::value>::type* = nullptr>
+  Value(T t) : variant_type(static_cast<int64_t>(t)) {}
+
+  template <
+      typename T,
+      typename std::enable_if<std::is_integral<T>::value &&
+                              std::is_unsigned<T>::value>::type* = nullptr>
+  Value(T t) : variant_type(static_cast<uint64_t>(t)) {}
+
+  template <typename T,
+            typename std::enable_if<std::is_floating_point<T>::value>::type* =
+                nullptr>
+  Value(T t) : variant_type(static_cast<double>(t)) {}
+
+  Value(const char* s) : variant_type(s) {}
 
   template <int N>
   Value(const char (&cstr)[N]) : variant_type(std::string(cstr)) {}
+
+  Value(const std::string& s) : variant_type(s) {}
+  Value(std::string&& s) : variant_type(std::move(s)) {}
+
+  Value(const Values& values) : variant_type(values) {}
+  Value(Values&& values) : variant_type(std::move(values)) {}
+
+  Value(const Dictionary& values) : variant_type(values) {}
+  Value(Dictionary&& values) : variant_type(std::move(values)) {}
 };
-}  // namespace OPENTRACING_VERSION_NAMESPACE
+END_OPENTRACING_ABI_NAMESPACE
 }  // namespace opentracing
 
 #endif  // OPENTRACING_VALUE_H

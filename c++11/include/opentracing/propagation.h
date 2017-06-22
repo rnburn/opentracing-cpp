@@ -1,14 +1,19 @@
 #ifndef OPENTRACING_PROPAGATION_H
 #define OPENTRACING_PROPAGATION_H
 
-#include <opentracing/preprocessor.h>
 #include <opentracing/stringref.h>
 #include <opentracing/util.h>
+#include <opentracing/version.h>
 #include <functional>
+#include <memory>
 #include <string>
+#include <system_error>
 
 namespace opentracing {
-inline namespace OPENTRACING_VERSION_NAMESPACE {
+BEGIN_OPENTRACING_ABI_NAMESPACE
+class Tracer;
+class SpanContext;
+
 enum class SpanReferenceType {
   // ChildOfRef refers to a parent Span that caused *and* somehow depends
   // upon the new child Span. Often (but not always), the parent Span cannot
@@ -51,89 +56,131 @@ enum class SpanReferenceType {
   FollowsFromRef = 2
 };
 
-// Carrier format values.
-enum class CarrierFormat {
-  // OpenTracingBinary encodes the SpanContext for propagation as opaque
-  // binary data.
-  OpenTracingBinary = 1,  // RESERVED, NOT IMPLEMENTED
+// Returns the std::error_category class used for opentracing propagation
+// errors.
+//
+// See
+//   http://blog.think-async.com/2010/04/system-error-support-in-c0x-part-1.html
+//   https://ned14.github.io/boost.outcome/md_doc_md_03-tutorial_b.html
+const std::error_category& propagation_error_category();
 
-  // HTTPHeaders represents SpanContexts as HTTP header string pairs.
-  //
-  // The HTTPHeaders format requires that the keys and values be valid
-  // as HTTP headers as-is (i.e., character casing may be unstable and
-  // special characters are disallowed in keys, values should be
-  // URL-escaped, etc).
-  //
-  // For Tracer::Inject(): the carrier must be a `TextMapReader`.
-  //
-  // For Tracer::Extract(): the carrier must be a `TextMapWriter`.
-  //
-  // For example, Inject():
-  //
-  //   std::vector<std::pair<std::string, std::string>> *headers = ...;
-  //   if (!span.tracer().Inject(span, CarrierFormat::HTTPHeadersCarrier,
-  // 	  			   make_ordered_string_pairs_writer(headers))) {
-  //     throw error("inject failed");
-  //   }
-  //
-  // Or Extract():
-  //
-  //   SpanContext extracted;
-  //   extracted = Tracer::Global().Extract(CarrierFormat::HTTPHeadersCarrier,
-  //                                        make_ordered_string_pairs_reader(*headers));
-  //   auto span = Tracer::Global().StartSpan("op", { ChildOf(extracted) });
-  //
-  HTTPHeaders = 2,
+// `invalid_span_context_error` errors occur when Tracer::Inject() is asked to
+// operate on a SpanContext which it is not prepared to handle (for
+// example, since it was created by a different tracer implementation).
+const std::error_code invalid_span_context_error(1,
+                                                 propagation_error_category());
 
-  // TextMap encodes the SpanContext as key:value pairs.
-  //
-  // The TextMap format is similar to the HTTPHeaderes format,
-  // without restrictions on the character set.
-  //
-  // For Tracer::Inject(): the carrier must be a `TextMapReader`.
-  //
-  // For Tracer::Extract(): the carrier must be a `TextMapWriter`.
-  //
-  // See the HTTPHeaders examples.
-  TextMap = 3
-};
+// `invalid_carrier_error` errors occur when Tracer::Inject() or
+// Tracer::Extract() implementations expect a different type of `carrier` than
+// they are given.
+const std::error_code invalid_carrier_error(2, propagation_error_category());
 
-// Base class for implementation-dependent Tracer::Inject carrier-type adapter.
-class CarrierReader {
+// `span_context_corrupted_error` occurs when the `carrier` passed to
+// Tracer::Extract() is of the expected type but is corrupted.
+const std::error_code span_context_corrupted_error(
+    3, propagation_error_category());
+
+// TextMapWriter is the Inject() carrier for the TextMap builtin format. With
+// it, the caller can encode a SpanContext for propagation as entries in a map
+// of unicode strings.
+//
+// See the HTTPHeaders examples.
+class TextMapReader {
  public:
-  virtual ~CarrierReader() = default;
+  virtual ~TextMapReader() = default;
+
+  // ForeachKey returns TextMap contents via repeated calls to the `f`
+  // function. If any call to `f` returns an error, ForeachKey terminates and
+  // returns that error.
+  //
+  // NOTE: The backing store for the TextMapReader may contain data unrelated
+  // to SpanContext. As such, Inject() and Extract() implementations that
+  // call the TextMapWriter and TextMapReader interfaces must agree on a
+  // prefix or other convention to distinguish their own key:value pairs.
+  //
+  // The "foreach" callback pattern reduces unnecessary copying in some cases
+  // and also allows implementations to hold locks while the map is read.
+  virtual Expected<void> ForeachKey(
+      std::function<Expected<void>(StringRef key, StringRef value)> f)
+      const = 0;
 };
 
-// Basic foundation for OpenTracing basictracer-compatible carrier readers.
-class BasicCarrierReader : public CarrierReader {
+// TextMapWriter is the Inject() carrier for the TextMap builtin format. With
+// it, the caller can encode a SpanContext for propagation as entries in a map
+// of unicode strings.
+//
+// See the HTTPHeaders examples.
+class TextMapWriter {
  public:
-  virtual void ForeachKey(
-      std::function<void(StringRef key, StringRef value)> f) const = 0;
+  virtual ~TextMapWriter() = default;
+
+  // Set a key:value pair to the carrier. Multiple calls to Set() for the
+  // same key leads to undefined behavior.
+  //
+  // NOTE: The backing store for the TextMapWriter may contain data unrelated
+  // to SpanContext. As such, Inject() and Extract() implementations that
+  // call the TextMapWriter and TextMapReader interfaces must agree on a
+  // prefix or other convention to distinguish their own key:value pairs.
+  virtual Expected<void> Set(const std::string& key,
+                             const std::string& value) const = 0;
 };
 
-// Base class for implementation-dependent Tracer::Extract carrier-type adapter.
-class CarrierWriter {
+// HTTPHeadersReader is the Inject() carrier for the HttpHeaders builtin format.
+// With it, the caller can encode a SpanContext for propagation as entries in
+// http request headers.
+//
+// For example, Extract():
+//
+//   const Tracer& tracer = /* some tracer */
+//   const HTTPHeadersReader& carrier_reader = /* some carrier */
+//   auto span_context_maybe = tracer.Extract(carrier_reader);
+//   if (!span_context_maybe) {
+//     throw std::runtime_error(span_context_maybe.error().message());
+//   }
+//   auto span = tracer.StartSpan("op",
+//                                { ChildOf(span_context_maybe->get()) });
+class HTTPHeadersReader : public TextMapReader {};
+
+// HTTPHeadersWriter is the Inject() carrier for the TextMap builtin format.
+// With it, the caller can encode a SpanContext for propagation as entries in
+// http request headers
+//
+// For example, Inject():
+//
+//   const HTTPHeadersWriter& carrier_writer = /* some carrier */
+//   auto was_successful = span.tracer().Inject(span,
+//                                              carrier_writer);
+//   if (!was_successful) {
+//     throw std::runtime_error(was_successful.error().message());
+//   }
+class HTTPHeadersWriter : public TextMapWriter {};
+
+// CustomCarrierReader is the Inject() carier for a custom format. With it, the
+// caller can encode a SpanContext for propagation as entries in a custom
+// protocol.
+class CustomCarrierReader {
  public:
-  virtual ~CarrierWriter() = default;
+  virtual ~CustomCarrierReader() = default;
+
+  // Extract is expected to specialize on the tracer implementation so as to
+  // most efficiently decode its context.
+  virtual Expected<std::unique_ptr<SpanContext>> Extract(
+      const Tracer& tracer) const = 0;
 };
 
-// Basic foundation for OpenTracing basictracer-compatible carrier writers.
-class BasicCarrierWriter : public CarrierWriter {
+// CustomCarrierWriter is the Inject() carrier for a custom format.  With it,
+// the caller can encode a SpanContext for propagation as entries in a custom
+// protocol.
+class CustomCarrierWriter {
  public:
-  virtual Expected<void, std::string> Set(const std::string& key,
-                                          const std::string& value) const = 0;
-};
+  virtual ~CustomCarrierWriter() = default;
 
-// Base class for injecting into TextMap and HTTPHeaders carriers.
-class TextMapReader : public BasicCarrierReader {
-  // TODO distinguish TextMap and HTTPHeaders behavior.
+  // Inject is expected to specialize on the tracer implementation so as to most
+  // efficiently encode its context.
+  virtual Expected<void> Inject(const Tracer& tracer,
+                                const SpanContext& sc) const = 0;
 };
-
-// Base class for extracting from TextMap and HTTPHeaders carriers.
-class TextMapWriter : public BasicCarrierWriter {
-  // TODO distinguish TextMap and HTTPHeaders behavior.
-};
-}  // namespace OPENTRACING_VERSION_NAMESPACE
+END_OPENTRACING_ABI_NAMESPACE
 }  // namespace opentracing
 
 #endif  // OPENTRACING_PROPAGATION_H

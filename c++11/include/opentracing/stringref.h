@@ -1,6 +1,12 @@
 #ifndef OPENTRACING_STRINGREF_H
 #define OPENTRACING_STRINGREF_H
 
+#include <opentracing/version.h>
+#include <algorithm>
+#include <cstring>
+#include <ostream>
+#include <string>
+
 // ===========
 // stringref.h
 // ===========
@@ -30,12 +36,8 @@
 // that breaks if it was expecting wstring and starts receiving string all of a
 // sudden. That design issue still needs to be addressed.
 
-#include <cstring>
-#include <ostream>
-#include <string>
-
 namespace opentracing {
-inline namespace OPENTRACING_VERSION_NAMESPACE {
+BEGIN_OPENTRACING_ABI_NAMESPACE
 // ===============
 // class StringRef
 // ===============
@@ -52,13 +54,8 @@ class StringRef {
   // Construct an empty StringRef
   StringRef() noexcept : data_(nullptr), length_(0) {}
 
-  // Explicitly create string reference from a const character array
-  template <size_t N>
-  StringRef(const char (&str)[N]) noexcept : data_(str), length_(N - 1) {}
-
-  // Explicitly create string reference from const character pointer
-  explicit StringRef(const char* str) noexcept
-      : data_(str), length_(std::strlen(str)) {}
+  // create string reference from const character pointer
+  StringRef(const char* str) noexcept : data_(str), length_(std::strlen(str)) {}
 
   // Create constant string reference from pointer and length
   StringRef(const std::basic_string<char>& str) noexcept
@@ -67,59 +64,76 @@ class StringRef {
   // Create constant string reference from pointer and length
   StringRef(const char* str, size_t len) noexcept : data_(str), length_(len) {}
 
-  // Disallow construction from non-const array
-  template <size_t N>
-  StringRef(char (&str)[N]) = delete;
-
-  // Implicit conversion to plain char *
-  operator const char*() const noexcept { return data_; }
-
-  // Reset the string reference given a const character array
-  template <size_t N>
-  void reset(const char (&str)[N]) noexcept {
-    data_ = str;
-    length_ = N;
-  }
-
-  // Reset this string ref to point at the supplied c-string
-  void reset(const char* str) noexcept {
-    data_ = str;
-    length_ = std::strlen(str);
-  }
-
-  // Reset the string reference given a std::string
-  void reset(const std::basic_string<char>& str) noexcept {
-    data_ = str.data();
-    length_ = str.length();
-  }
-
-  // Reset this string ref to point at the supplied 'str' of 'length' bytes.
-  void reset(const char* str, const size_t length) noexcept {
-    data_ = str;
-    length_ = length;
-  }
-
-  // Disallow reset from non-const array
-  template <size_t N>
-  void reset(char (&str)[N]) = delete;
+  // Implicit conversion to std::string
+  operator std::string() const { return {data_, length_}; }
 
   // Return address of the referenced string
   const char* data() const noexcept { return data_; }
 
+  // Returns true if `length_` == 0
+  bool empty() const { return length_ == 0; }
+
   // Return the length of the referenced string
   size_t length() const noexcept { return length_; }
+  size_t size() const noexcept { return length_; }
+
+  // Returns a RandomAccessIterator to the first element.
+  const char* begin() const noexcept { return data(); }
+
+  // Returns a RandomAccessIterator for the last element.
+  const char* end() const noexcept { return data() + length(); }
 
  private:
   const char* data_;  // Pointer to external storage
   size_t length_;     // Length of data pointed to by 'data_'
 };
 
+inline bool operator==(StringRef lhs, StringRef rhs) noexcept {
+  return lhs.length() == rhs.length() &&
+         std::equal(lhs.data(), lhs.data() + lhs.length(), rhs.data());
+}
+
+inline bool operator==(StringRef lhs, const std::string& rhs) noexcept {
+  return lhs == StringRef(rhs);
+}
+
+inline bool operator==(const std::string& lhs, StringRef rhs) noexcept {
+  return StringRef(lhs) == rhs;
+}
+
+inline bool operator==(StringRef lhs, const char* rhs) noexcept {
+  return lhs == StringRef(rhs);
+}
+
+inline bool operator==(const char* lhs, StringRef rhs) noexcept {
+  return StringRef(lhs) == rhs;
+}
+
+inline bool operator!=(StringRef lhs, StringRef rhs) noexcept {
+  return !(lhs == rhs);
+}
+
+inline bool operator!=(StringRef lhs, const std::string& rhs) noexcept {
+  return !(lhs == rhs);
+}
+
+inline bool operator!=(const std::string& lhs, StringRef rhs) noexcept {
+  return !(lhs == rhs);
+}
+
+inline bool operator!=(StringRef lhs, const char* rhs) noexcept {
+  return !(lhs == rhs);
+}
+
+inline bool operator!=(const char* lhs, StringRef rhs) noexcept {
+  return !(lhs == rhs);
+}
+
 inline std::ostream& operator<<(std::ostream& os,
                                 const opentracing::StringRef& ref) {
   return os.write(ref.data(), static_cast<std::streamsize>(ref.length()));
 }
-
-}  // namespace OPENTRACING_VERSION_NAMESPACE
+END_OPENTRACING_ABI_NAMESPACE
 }  // namespace opentracing
 
 #endif  // OPENTRACING_STRINGREF_H
