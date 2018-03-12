@@ -142,8 +142,8 @@ reference.
           opentracing::string_view, opentracing::string_view)>;
     
       opentracing::expected<void> ForeachKey(F f) const override {
-        // Iterate through all key-value pairs, the tracer use the relevant keys to
-        // extract a span context.
+        // Iterate through all key-value pairs, the tracer will use the relevant keys
+        // to extract a span context.
         for (auto& key_value : data) {
           auto was_successful = f(key_value.first, key_value.second);
           if (!was_successful) {
@@ -195,5 +195,5 @@ backwards compatibility will become more of a priority.
 
 This library requires C++11 or later. But if you're interested in a C or C++98
 API contact us on [gitter](https://gitter.im/opentracing/opentracing-cpp?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge).
-We're open to supporting additional APIs in a separate repository if there's
+We're open to supporting additional APIs in a separate repository if there are
 people willing to maintain it.

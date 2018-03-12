@@ -7,7 +7,7 @@ project(opentracing-cpp)
 
 set(OPENTRACING_ABI_VERSION "1")
 set(OPENTRACING_VERSION_MAJOR "1")
-set(OPENTRACING_VERSION_MINOR "2")
+set(OPENTRACING_VERSION_MINOR "3")
 set(OPENTRACING_VERSION_PATCH "0")
 set(OPENTRACING_VERSION_STRING
   "${OPENTRACING_VERSION_MAJOR}.${OPENTRACING_VERSION_MINOR}.${OPENTRACING_VERSION_PATCH}")
@@ -26,20 +26,13 @@ SET(CPACK_PACKAGE_VERSION_PATCH ${OPENTRACING_VERSION_PATCH})
 include(CPack)
 
 # ==============================================================================
-# Set up generated version.h
-
-configure_file(version.h.in include/opentracing/version.h)
-include_directories(${CMAKE_CURRENT_BINARY_DIR}/include)
-install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/opentracing
-        DESTINATION include)
-
-# ==============================================================================
 # Configure compilers
 
 set(CMAKE_CXX_STANDARD 11)
 if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Weverything \
     -Wno-c++98-compat \
+    -Wno-c++98-compat-pedantic \
     -Wno-c++98-compat-bind-to-temporary-copy \
     -Wno-weak-vtables \
     -Wno-exit-time-destructors \
@@ -65,33 +58,105 @@ if(ENABLE_LINTING)
 endif()
 
 # ==============================================================================
+# Check for weak symbol support
+
+try_compile(
+  SUPPORTS_WEAK_SYMBOLS
+  "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/CMakeTmp"
+  SOURCES ${CMAKE_SOURCE_DIR}/cmake/weak_symbol.cpp)
+
+# ==============================================================================
+# Set up options
+
+option(BUILD_SHARED_LIBS "Build as a shared library" ON)
+option(BUILD_STATIC_LIBS "Build as a static library" ON)
+option(BUILD_MOCKTRACER "Build mocktracer library" ON)
+option(BUILD_DYNAMIC_LOADING "Build with dynamic loading support" ON)
+
+if (BUILD_DYNAMIC_LOADING)
+  if (NOT SUPPORTS_WEAK_SYMBOLS OR NOT UNIX)
+    message(WARNING "Building without dynamic loading support.")
+    set(BUILD_DYNAMIC_LOADING OFF)
+  endif()
+endif()
+
+set(OPENTRACING_BUILD_DYNAMIC_LOADING ${BUILD_DYNAMIC_LOADING})
+
+if (NOT BUILD_SHARED_LIBS AND NOT BUILD_STATIC_LIBS)
+    message(FATAL_ERROR "One or both of BUILD_SHARED_LIBS or BUILD_STATIC_LIBS must be set to ON to build")
+endif()
+
+# ==============================================================================
+# Set up generated header files config.h and version.h
+
+configure_file(version.h.in include/opentracing/version.h)
+configure_file(config.h.in include/opentracing/config.h)
+include_directories(${CMAKE_CURRENT_BINARY_DIR}/include)
+install(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/opentracing
+        DESTINATION include)
+
+# ==============================================================================
 # OpenTracing library targets
 
 include_directories(include)
 include_directories(SYSTEM 3rd_party/include)
 
-set(SRCS src/propagation.cpp src/noop.cpp src/tracer.cpp)
-add_library(opentracing SHARED ${SRCS})
-target_include_directories(opentracing INTERFACE "$<INSTALL_INTERFACE:include/>")
-set_target_properties(opentracing PROPERTIES VERSION ${OPENTRACING_VERSION_STRING}
-                                             SOVERSION ${OPENTRACING_VERSION_MAJOR})
-add_library(opentracing-static STATIC ${SRCS})
-set_target_properties(opentracing-static PROPERTIES OUTPUT_NAME opentracing)
-target_include_directories(opentracing-static INTERFACE "$<INSTALL_INTERFACE:include/>")
-if (CLANG_TIDY_EXE)
-  set_target_properties(opentracing PROPERTIES
-                                    CXX_CLANG_TIDY "${DO_CLANG_TIDY}")
+set(SRCS src/propagation.cpp
+         src/dynamic_load.cpp
+         src/noop.cpp
+         src/tracer.cpp
+         src/tracer_factory.cpp)
+
+if (BUILD_DYNAMIC_LOADING)
+  list(APPEND SRCS src/dynamic_load_unix.cpp)
+else()
+  list(APPEND SRCS src/dynamic_load_unsupported.cpp)
+endif()
+
+list(APPEND LIBRARIES "")
+if (BUILD_DYNAMIC_LOADING)
+  list(APPEND LIBRARIES ${CMAKE_DL_LIBS})
 endif()
 
 
-install(DIRECTORY 3rd_party/include/opentracing DESTINATION include
+if (BUILD_SHARED_LIBS)
+  add_library(opentracing SHARED ${SRCS})
+  target_link_libraries(opentracing ${LIBRARIES})
+  target_include_directories(opentracing INTERFACE "$<INSTALL_INTERFACE:include/>")
+  set_target_properties(opentracing PROPERTIES VERSION ${OPENTRACING_VERSION_STRING}
+                                             SOVERSION ${OPENTRACING_VERSION_MAJOR})
+  install(TARGETS opentracing EXPORT OpenTracingTargets
+          LIBRARY DESTINATION lib
+          ARCHIVE DESTINATION lib)
+  if (CLANG_TIDY_EXE)
+    set_target_properties(opentracing PROPERTIES
+                                    CXX_CLANG_TIDY "${DO_CLANG_TIDY}")
+  endif()
+endif()
+
+if (BUILD_STATIC_LIBS)
+  add_library(opentracing-static STATIC ${SRCS})
+  target_link_libraries(opentracing-static ${LIBRARIES})
+  set_target_properties(opentracing-static PROPERTIES OUTPUT_NAME opentracing)
+  target_include_directories(opentracing-static INTERFACE "$<INSTALL_INTERFACE:include/>")
+  install(TARGETS opentracing-static EXPORT OpenTracingTargets
+          ARCHIVE DESTINATION lib)
+endif()
+
+
+install(DIRECTORY 3rd_party/include/opentracing/expected DESTINATION include/opentracing
+            FILES_MATCHING PATTERN "*.hpp"
+                           PATTERN "*.h")
+install(DIRECTORY 3rd_party/include/opentracing/variant DESTINATION include/opentracing
             FILES_MATCHING PATTERN "*.hpp"
                            PATTERN "*.h")
 install(DIRECTORY include/opentracing DESTINATION include
             FILES_MATCHING PATTERN "*.h")
-install(TARGETS opentracing opentracing-static EXPORT OpenTracingTargets
-        LIBRARY DESTINATION lib
-        ARCHIVE DESTINATION lib)
+
+
+if (BUILD_MOCKTRACER)
+  add_subdirectory(mocktracer)
+endif()
 
 # ==============================================================================
 # Package configuration setup
@@ -122,4 +187,11 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/OpenTracingConfig.cmake
 include(CTest)
 if(BUILD_TESTING)
   add_subdirectory(test)
+endif()
+
+# ==============================================================================
+# Examples
+
+if(BUILD_TESTING)
+  add_subdirectory(example)
 endif()

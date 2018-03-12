@@ -19,6 +19,7 @@
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
+#include <opentracing/version.h>
 
 #define  expected_lite_VERSION "0.0.0"
 
@@ -45,6 +46,7 @@
     typename = typename std::enable_if< (__VA_ARGS__), opentracing::expected_detail::enabler >::type
 
 namespace opentracing {
+BEGIN_OPENTRACING_ABI_NAMESPACE
 
 template< typename T, typename E >
 class expected;
@@ -115,7 +117,7 @@ private:
         return std::move( m_value );
     }
 
-    value_type * value_ptr() const
+    const value_type * value_ptr() const
     {
         return &m_value;
     }
@@ -188,7 +190,7 @@ private:
 
 /// class unexpected_type
 
-template< typename E = std::exception_ptr >
+template< typename E = std::error_code >
 class unexpected_type
 {
 public:
@@ -382,6 +384,35 @@ public:
 
 private:
     error_type m_error;
+};
+
+/// class error_traits
+
+template< typename Error >
+struct error_traits
+{
+    static void rethrow( Error const & e )
+    {
+        throw bad_expected_access<Error>{ e };
+    }
+};
+
+template<>
+struct error_traits< std::exception_ptr >
+{
+    static void rethrow( std::exception_ptr const & e )
+    {
+        std::rethrow_exception( e );
+    }
+};
+
+template<>
+struct error_traits< std::error_code >
+{
+    static void rethrow( std::error_code const & e )
+    {
+        throw std::system_error( e );
+    }
 };
 
 /// class expected
@@ -652,28 +683,22 @@ public:
     constexpr value_type const & value() const &
     {
         return has_value()
-            ? contained.value()
-            : std::is_same<error_type, std::exception_ptr>::value
-            ? ( std::rethrow_exception( contained.error() ), contained.value() )
-            : ( throw bad_expected_access<error_type>( contained.error() ), contained.value() );
+            ? ( contained.value() )
+            : ( error_traits<error_type>::rethrow( contained.error() ), contained.value() );
     }
 
     value_type & value() &
     {
         return has_value()
-            ? contained.value()
-            : std::is_same<error_type, std::exception_ptr>::value
-            ? ( std::rethrow_exception( contained.error() ), contained.value() )
-            : ( throw bad_expected_access<error_type>( contained.error() ), contained.value() );
+            ? ( contained.value() )
+            : ( error_traits<error_type>::rethrow( contained.error() ), contained.value() );
     }
 
-    constexpr value_type && value() const &&
+    value_type && value() &&
     {
         return has_value()
-            ? std::move( contained.value() )
-            : std::is_same<error_type, std::exception_ptr>::value
-            ? ( std::rethrow_exception( contained.error() ), contained.value() )
-            : ( throw bad_expected_access<error_type>( contained.error() ), contained.value() );
+            ? ( contained.value() )
+            : ( error_traits<error_type>::rethrow( contained.error() ), contained.value() );
     }
 
     constexpr error_type const & error() const &
@@ -1163,6 +1188,7 @@ constexpr auto make_expected_from_error( E e ) -> expected<T, typename std::deca
     return expected<T, typename std::decay<E>::type>( make_unexpected( e ) );
 }
 
+END_OPENTRACING_ABI_NAMESPACE
 } // namespace opentracing
 
 namespace std {

@@ -8,5 +8,8 @@ TEST_NAMES = [
 [cc_test(
     name = test_name,
     srcs = [test_name + ".cpp"],
-    deps = ["//:opentracing"],
+    deps = [
+        "//:opentracing",
+        "//3rd_party:catch2",
+    ],
 ) for test_name in TEST_NAMES]
