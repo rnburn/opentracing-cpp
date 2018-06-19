@@ -78,6 +78,7 @@ try_compile(
 option(BUILD_SHARED_LIBS "Build as a shared library" ON)
 option(BUILD_STATIC_LIBS "Build as a static library" ON)
 option(BUILD_MOCKTRACER "Build mocktracer library" ON)
+option(BUILD_MOCKTRACER_PLUGIN "Build mocktracer library as a plugin" OFF)
 option(BUILD_DYNAMIC_LOADING "Build with dynamic loading support" ON)
 
 if (BUILD_DYNAMIC_LOADING)
@@ -156,6 +157,12 @@ if (BUILD_STATIC_LIBS)
   target_include_directories(opentracing-static INTERFACE "$<INSTALL_INTERFACE:include/>")
   install(TARGETS opentracing-static EXPORT OpenTracingTargets
 	  ARCHIVE DESTINATION ${LIB_INSTALL_DIR})
+endif()
+
+if (BUILD_MOCKTRACER_PLUGIN)
+  add_library(opentracing-static-pic STATIC ${SRCS})
+  target_link_libraries(opentracing-static-pic ${LIBRARIES})
+  set_property(TARGET opentracing-static-pic PROPERTY POSITION_INDEPENDENT_CODE ON)
 endif()
 
 

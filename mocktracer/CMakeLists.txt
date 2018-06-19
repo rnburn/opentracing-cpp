@@ -31,6 +31,19 @@ if (BUILD_STATIC_LIBS)
 	  ARCHIVE DESTINATION ${LIB_INSTALL_DIR})
 endif()
 
+if (BUILD_MOCKTRACER_PLUGIN)
+  add_library(opentracing_mocktracer-plugin SHARED ${SRCS})
+  set_target_properties(opentracing_mocktracer-plugin PROPERTIES OUTPUT_NAME opentracing_mocktracer_plugin)
+  target_link_libraries(opentracing_mocktracer-plugin opentracing-static-pic)
+  file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/export.map
+    "{ global: OpenTracingMakeTracerFactory; local: *; };")
+  target_link_libraries(opentracing_mocktracer-plugin 
+    opentracing-static-pic
+    -Wl,--version-script=${CMAKE_CURRENT_BINARY_DIR}/export.map)
+  install(TARGETS opentracing_mocktracer-plugin
+          LIBRARY DESTINATION ${LIB_INSTALL_DIR})
+endif()
+
 install(DIRECTORY include/opentracing DESTINATION include
             FILES_MATCHING PATTERN "*.h")
 
